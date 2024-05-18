@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, setState } from "react";
+import {useState, useEffect, useRef, useCallback} from "react";
 import "./App.css";
-import { UpdateDisplay } from "./Canvas";
+import { drawCanvas } from "./Canvas";
 import { Model } from "./Model";
 import { config } from "./Config";
 import { Menu } from "./Menu";
@@ -11,16 +11,21 @@ import { VscDebugRestart } from "react-icons/vsc";
 
 
 export default function App() {
-    const [model, setModel] = useState(new Model(config));
+    const [model] = useState(new Model(config));
     const canvasRef = useRef(null);
-    const [redraw, forceRedraw] = useState(false);
     const [menu, setMenu] = useState(false);
     const [touchActive, setTouchActive] = useState(false);
-    const [timeTouchStart, setTimeTouchStart] = useState(null);
     const [touchMoved, setTouchMoved] = useState(false);
     const [timeLastMovedLR, setTimeLastMoved] = useState(null);
-    const [timeLastMovedDown, setTimeLastMovedDown] = useState(null);
-    const [timeSinceLastMove, setTimeSinceLastMove] = useState(null);
+    const [gameStarted, setStarted] = useState(false);
+    const [paused, setPaused] = useState(false);
+    const [time, setTime] = useState(0);
+    const [runTimer, setRunTimer] = useState(false);
+
+    function restartGame() {
+        model.restartGame();
+
+    }
 
     //prevent elastic scrolling
     useEffect(() => {
@@ -30,33 +35,11 @@ export default function App() {
             }
         }, { passive: false });
     }, [touchActive]);
-
-    // Event listeners
-    useEffect(() => {
-        document.addEventListener("keydown", handleKeyDown);
-        return () => {
-            document.removeEventListener("keydown", handleKeyDown);
-        };
-    }, [redraw]);
-
+    
     function checkTimeLastMovedLR() {
         if (timeLastMovedLR === null) {
             return true;
-        } else if (new Date().getTime() - timeLastMovedLR > 100) {
-            return true;
-        } else {
-            return false;
-        }
-    }
-
-    function checkTimeLastMovedDown() {
-        if (timeLastMovedDown === null) {
-            return true;
-        } else if (new Date().getTime() - timeLastMovedDown > 75) {
-            return true;
-        } else {
-            return false;
-        }
+        } else return new Date().getTime() - timeLastMovedLR > 100;
     }
 
     // Handles touch gesture
@@ -64,87 +47,109 @@ export default function App() {
         let xDiff = model.touchEndX - model.touchStartX;
         let yDiff = model.touchEndY - model.touchStartY;
 
-        if (Math.abs(xDiff) < 10 && Math.abs(yDiff) < 200) {
+        if (Math.abs(xDiff) < 20 && Math.abs(yDiff) < 100) {
             return;
         }
 
         if (Math.abs(xDiff) > Math.abs(yDiff) && checkTimeLastMovedLR()) {
             if (xDiff > 0) {
                 model.movePieceRight();
+                updateDisplay();
                 setTimeLastMoved(new Date().getTime());
-                forceRedraw(!redraw);
             } else if (xDiff < 0) {
                 model.movePieceLeft();
+                updateDisplay();
                 setTimeLastMoved(new Date().getTime());
-                forceRedraw(!redraw);
             }
-        } else if (Math.abs(yDiff) > Math.abs(xDiff) && checkTimeLastMovedDown()) {
+        } else if (Math.abs(yDiff) > Math.abs(xDiff)) {
             if (yDiff > 0) {
                 model.movePieceDown();
+                updateDisplay();
                 setTimeLastMoved(new Date().getTime());
             } else if (yDiff < 0) {
                 model.rotatePiece();
+                updateDisplay();
                 setTimeLastMoved(new Date().getTime());
             }
         }
 
-        forceRedraw(!redraw);
     }
+
+    const updateDisplay = useCallback(() => {
+        drawCanvas(model, canvasRef);
+
+
+    }, [model]);
 
     // Handles start button
     function handleStart() {
         model.startGame();
-        forceRedraw(!redraw);
+        setRunTimer(true);
+        setStarted(true);
+        setPaused(false);
+        updateDisplay();
     }
 
     // Handles all keyboard presses
-    function handleKeyDown(e) {
-        if (e.keyCode === 37) {
-            model.movePieceLeft();
-            forceRedraw(!redraw);
-        } else if (e.keyCode === 39) {
-            model.movePieceRight();
-            forceRedraw(!redraw);
-        } else if (e.keyCode === 40) {
-            model.movePieceDown();
-            forceRedraw(!redraw);
-        } else if (e.keyCode === 38) {
-            model.rotatePiece();
-            forceRedraw(!redraw);
+    useEffect(() => {
+        function handleKeyDown(e) {
+            if (e.keyCode === 37) {
+                model.movePieceLeft();
+            } else if (e.keyCode === 39) {
+                model.movePieceRight();
+            } else if (e.keyCode === 40) {
+                model.movePieceDown();
+            } else if (e.keyCode === 38) {
+                model.rotatePiece();
+            }
+            updateDisplay();
         }
-    }
+        document.addEventListener("keydown", handleKeyDown);
+        return () => {
+            document.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [model, updateDisplay]);
 
     useEffect(() => {
-        const timerInterval = setInterval(() => {
-            if (model.gameStarted && !model.gameOver && !model.paused) {
-                model.timePlayed++;
-            }
-        }, 1000);
-        return () => clearInterval(timerInterval);
-    }, []);
+        if (runTimer) {
+            const timerInterval = setInterval(() => {
+                if (gameStarted && !model.gameOver && !paused) {
+                    model.timePlayed++;
+                    setTime(model.timePlayed);
+                }
+            }, 1000);
+            return () => clearInterval(timerInterval);
+        }
+    }, [model.gameOver, gameStarted, paused, model.timePlayed, runTimer]);
 
     // Every second, move piece down
     useEffect(() => {
-        const interval = setInterval(() => {
-            if (model.gameStarted && !model.gameOver && !model.paused) {
-                model.checkGameOver();
-                if (model.rowsCleared >= model.speedUpThreshold) {
-                    model.fallRate -= (model.fallRate * model.speedUpRate);
-                    model.rowsCleared = 0;
-                    model.level++;
+        if (runTimer) {
+            const interval = setInterval(() => {
+
+                if (gameStarted && !model.gameOver && !paused) {
+                    model.checkGameOver();
+                    if (model.rowsCleared >= model.speedUpThreshold) {
+                        model.fallRate -= (model.fallRate * model.speedUpRate);
+                        model.rowsCleared = 0;
+                        model.level++;
+                    }
+                    model.movePieceDown();
+                    updateDisplay();
                 }
-                model.movePieceDown();
-                forceRedraw(!redraw);
-            }
-        }, model.fallRate);
-        return () => clearInterval(interval);
-    }, [redraw]);
+            }, model.fallRate);
+            return () => clearInterval(interval);
+        }
+    }, [gameStarted, paused, runTimer, model, updateDisplay]);
 
     // Handles restart button
     function handleRestart() {
-        setModel(new Model(config));
+        setRunTimer(false);
+        setTime(0);
+        restartGame();
         model.startGame();
-        forceRedraw(!redraw);
+        setRunTimer(true);
+        updateDisplay();
     }
 
     function GameOver() {
@@ -155,17 +160,16 @@ export default function App() {
         );
     }
 
-    function TimeDisplay() {
-
-        let time = model.timePlayed;
+    const TimeDisplay = useCallback(() => {
 
         return (
             <div className="Time">
-                {model.startTime !== null ? <p>Time Played: {time}s</p> : <p>Not Started</p>}
-                
+                {time ? <p>Time Played: {time}s</p> : <p>Not Started</p>}
+
             </div>
-        ); 
-    }
+        );
+    }, [time]);
+
 
     function Stats() {
 
@@ -180,17 +184,16 @@ export default function App() {
 
     function handleMenu() {
         setMenu(!menu);
-    }    
-    
+    }
+
     function handlePause() {
-        model.paused = !model.paused;
-        forceRedraw(!redraw);
+        setPaused(!paused);
     }
 
     function PauseScreen() {
         return (
             <div className="PauseScreen">
-                
+
             </div>
         );
     }
@@ -214,7 +217,6 @@ export default function App() {
         model.touchEndX = x;
         model.touchEndY = y;
 
-        setTimeTouchStart(new Date().getTime());
         setTouchMoved(false);
 
     }
@@ -240,12 +242,11 @@ export default function App() {
 
         if (!touchMoved) {
             model.rotatePiece();
-            forceRedraw(!redraw);
         }
         setTouchActive(false);
         setTouchMoved(false);
     }
- 
+
     return (
         <div className="App">
             {menu ? <Menu handleMenu={handleMenu} model={model}/> : null}
@@ -253,21 +254,20 @@ export default function App() {
                 <IoIosMenu className="menuIcon" onClick={handleMenu} />
                 <h1 className="AppName">JD Tetris</h1>
                 <TimeDisplay />
-                {model.gameStarted && model.paused ? <FaPlay className="pauseIconActive" onClick={handlePause} onTouchEnd={handlePause}/> : null}
-                {model.gameStarted && !model.paused ? <CiPause1 className="pauseIcon" onClick={handlePause} onTouchEnd={handlePause}/> : null}
-                {model.gameStarted && model.paused ? <PauseScreen /> : null}
-                {!model.gameStarted ? <FaPlay className="startIcon" onClick={handleStart} /> : <VscDebugRestart className="startIcon" onClick={handleRestart} />} 
+                {gameStarted && paused ? <FaPlay className="pauseIconActive" onClick={handlePause} onTouchEnd={handlePause}/> : null}
+                {gameStarted && !paused ? <CiPause1 className="pauseIcon" onClick={handlePause} onTouchEnd={handlePause}/> : null}
+                {gameStarted && paused ? <PauseScreen /> : null}
+                {!gameStarted ? <FaPlay className="startIcon" onClick={handleStart} /> : <VscDebugRestart className="startIcon" onClick={handleRestart} />}
             </div>
             <div className="GameArea" onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
                 <div className="GameHeader">
                     {model.gameOver ? <GameOver /> : <Stats />}
-                </div>             
+                </div>
                 <canvas className="canvas" id="canvas" ref={canvasRef}   width="600" height="1200"></canvas>
-                <UpdateDisplay canvasRef={canvasRef} model={model} redraw={redraw} />
             </div>
             <div className="Footer">
                 <p>Controls: Left, Right, Down, Up-Rotates</p>
-            </div>            
+            </div>
         </div>
     );
 }

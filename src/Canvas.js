@@ -1,14 +1,4 @@
-import { useEffect } from "react";
-
-export function UpdateDisplay(props) {
-    useEffect(() => {
-        drawCanvas(props.model, props.canvasRef);
-    }, [props]);
-
-    return null;
-}
-
-function drawCanvas(model, canvasRef) {
+export function drawCanvas(model, canvasRef) {
     let canvas = canvasRef.current;
     let ctx = canvas.getContext("2d");
 
@@ -19,7 +9,7 @@ function drawCanvas(model, canvasRef) {
     drawPiece(ctx, model);
 
 }
-    
+
 
 function drawSquares(ctx, model) {
     let squareSize = model.squareSize;
